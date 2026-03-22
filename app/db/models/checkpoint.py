@@ -1,7 +1,7 @@
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import String, LargeBinary, Integer, DateTime, Index
+from sqlalchemy import String, LargeBinary, Integer, DateTime, Index, func
 
 from app.db.base import Base
 
@@ -36,7 +36,7 @@ class Checkpoint(Base):
     # Время создания
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        server_default=func.now()
     )
 
     # Уникальный индекс: один чекпоинт на thread_id + checkpoint_id

@@ -1,6 +1,6 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import String, Text, Integer, DateTime, ForeignKey
+from sqlalchemy import String, Text, Integer, DateTime, ForeignKey, func
 
 from app.db.base import Base
 
@@ -34,7 +34,7 @@ class TicketHistory(Base):
     # Метаданные
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
-        default=lambda: datetime.now(timezone.utc)
+        server_default=func.now()
     )
 
     # Связь обратно с заявкой
