@@ -1,0 +1,21 @@
+​# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Проект
+.env
+*.log
+.pytest_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
