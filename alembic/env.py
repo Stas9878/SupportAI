@@ -12,9 +12,9 @@ from alembic import context
 # Добавляем корень проекта в sys.path для импорта моделей
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 
+from app.db.models import *
 from app.db.base import Base
 from app.config import get_settings
-from app.db.models import ticket, checkpoint, history
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
