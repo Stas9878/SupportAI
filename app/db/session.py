@@ -16,7 +16,7 @@ def get_engine():
     settings = get_settings()
 
     return create_async_engine(
-        settings.DATABASE_URL,
+        str(settings.DATABASE_URL),
         pool_pre_ping=True,  # Проверка соединения перед использованием
         pool_size=10,        # Размер пула соединений
         max_overflow=20,     # Дополнительные соединения при пиковой нагрузке
