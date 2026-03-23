@@ -1,6 +1,7 @@
 import enum
-from datetime import datetime, timezone
+from datetime import datetime
 
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, Text, Integer, DateTime, Enum, func
 
@@ -45,7 +46,7 @@ class Ticket(Base):
         default=TicketPriority.MEDIUM
     )
     tags: Mapped[list[str] | None] = mapped_column(
-        String(255),
+        ARRAY(String),
         nullable=True
     )
 

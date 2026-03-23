@@ -1,18 +1,18 @@
-"""initial schema: tickets, history, checkpoints
+"""initial_schema_tickets_history
 
-Revision ID: d59ce34cdc7f
+Revision ID: 1236a4162dd8
 Revises: 
-Create Date: 2026-03-22 11:50:14.213625
+Create Date: 2026-03-23 21:18:52.752349
 
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-
+from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = 'd59ce34cdc7f'
+revision: str = '1236a4162dd8'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -39,7 +39,7 @@ def upgrade() -> None:
     sa.Column('user_input', sa.Text(), nullable=False),
     sa.Column('category', sa.String(length=64), nullable=True),
     sa.Column('priority', sa.Enum('LOW', 'MEDIUM', 'HIGH', 'CRITICAL', name='ticket_priority'), nullable=False),
-    sa.Column('tags', sa.String(length=255), nullable=True),
+    sa.Column('tags', postgresql.ARRAY(sa.String()), nullable=True),
     sa.Column('status', sa.Enum('NEW', 'IN_PROGRESS', 'RESOLVED', 'CLOSED', name='ticket_status'), nullable=False),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
