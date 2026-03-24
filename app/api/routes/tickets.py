@@ -1,7 +1,6 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
-from app.agent.state import AgentState
 from app.db.session import get_db_session
 from app.crud import ticket as ticket_crud
 from app.api.schemas.ticket import (
