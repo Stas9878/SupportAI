@@ -1,8 +1,11 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from app.agent.state import AgentState
 from app.db.session import get_db_session
 from app.crud import ticket as ticket_crud
+from app.config import get_settings, Settings
+from app.agent.checkpointer import get_checkpointer
 from app.api.schemas.ticket import (
     TicketCreate,
     TicketUpdate,
@@ -18,36 +21,46 @@ router = APIRouter(prefix="/tickets", tags=["tickets"])
 @router.post("/", response_model=TicketResponse, status_code=status.HTTP_201_CREATED)
 async def create_ticket_endpoint(
     ticket_in: TicketCreate,
-    db: AsyncSession = Depends(get_db_session)
+    db: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings)
 ) -> TicketResponse:
-    """Создаёт заявку с обработкой через агента."""
+    """Создаёт заявку с обработкой через агента с поддержкой чекпоинтов."""
+    db_url = str(settings.DATABASE_URL)
 
-    agent_graph = get_agent_graph()
+    # Получаем фабрику графа и engine для checkpointer
+    build_graph = get_agent_graph()
 
-    initial_state = {
-        "thread_id": ticket_in.thread_id,
-        "user_input": ticket_in.user_input
-    }
+    initial_state = AgentState(
+        thread_id=ticket_in.thread_id,
+        user_input=ticket_in.user_input
+    )
 
-    # Запуск агента с передачей зависимостей через config
-    async with get_telegram_client_context() as telegram_client:
+    # Запуск с чекпоинтером и передачей зависимостей
+    async with get_checkpointer(db_url) as checkpointer, \
+               get_telegram_client_context() as telegram_client:
+
+        # Компилируем граф с checkpointer для этого запроса
+        agent_graph = build_graph(checkpointer=checkpointer)
+
         result_state = await agent_graph.ainvoke(
             initial_state,
             config={
                 "configurable": {
                     "session": db,
-                    "telegram_client": telegram_client
+                    "telegram_client": telegram_client,
+                    "thread_id": ticket_in.thread_id
                 }
             }
         )
 
+    # Обработка ошибок
     if result_state.get("error"):
         raise HTTPException(status_code=500, detail=result_state["error"])
 
-    # Получаем уже сохранённую заявку по id от агента
     if not result_state.get("ticket_id"):
         raise HTTPException(status_code=500, detail="Agent did not return ticket_id")
 
+    # Получаем сохранённую заявку
     db_ticket = await ticket_crud.get_ticket_by_id(db, result_state["ticket_id"])
     return TicketResponse.model_validate(db_ticket)
 
