@@ -1,10 +1,17 @@
 import json
+from tenacity import RetryError
+
 from app.agent.llm import llm
 from app.agent.state import AgentState
 from app.agent.retry import with_llm_retry
 
 
 @with_llm_retry(max_attempts=3)
+def _tag_llm_call(prompt: str):
+    """Внутренняя функция: только вызов LLM."""
+    return llm.invoke(prompt)
+
+
 def tag_ticket(state: AgentState) -> dict:
     """Назначает теги заявке с retry и валидацией JSON."""
 
@@ -23,37 +30,32 @@ api, integration, mobile, web, documentation
 
 Теги:"""
 
-    # Декоратор уже обработал retry — здесь только успех или fallback dict
-    response = llm.invoke(prompt)
-
-    # Проверка на fallback от декоратора
-    if response is None or isinstance(response, dict) and "error" in response:
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=None,
-            error=f"{state.error or ''} tagging_failed: max retries exceeded".strip(),
-            reasoning=f"{state.reasoning or ''} | Ошибка теггирования".strip(" |")
-        ).to_dict()
-
     try:
+        # 1. Вызов LLM с retry
+        response = _tag_llm_call(prompt)
         content = response.content.strip()
+
+        # 2. Парсинг JSON (может упасть с JSONDecodeError)
         tags = json.loads(content)
 
-        # Валидация структуры JSON
-        if not isinstance(tags, list) or len(tags) > 3:
-            tags = []
-        elif not all(isinstance(t, str) for t in tags):
-            tags = []
+        # 3. Валидация структуры
+        if not isinstance(tags, list):
+            raise ValueError("Expected list of tags")
 
-        # Валидация значений
+        # 4. Валидация длины
+        if len(tags) > 3:
+            tags = tags[:3]
+
+        # 5. Валидация типов элементов
+        if not all(isinstance(t, str) for t in tags):
+            raise ValueError("All tags must be strings")
+
+        # 6. Валидация значений (фильтр по разрешённому набору)
         valid_tags = {
             "login", "password", "access", "payment", "billing",
             "bug", "error", "crash", "feature", "ui", "api"
         }
-        tags = [t for t in tags if t in valid_tags][:3]
+        tags = [t for t in tags if t in valid_tags]
 
         return AgentState(
             thread_id=state.thread_id,
@@ -64,13 +66,26 @@ api, integration, mobile, web, documentation
             reasoning=f"{state.reasoning or ''} | Теги: {tags}".strip(" |")
         ).to_dict()
 
-    except json.JSONDecodeError as e:
+    except RetryError:
+        # Исчерпаны попытки вызова LLM
         return AgentState(
             thread_id=state.thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
             tags=None,
-            error=f"{state.error or ''} tagging_failed: {str(e)}".strip(),
-            reasoning=f"{state.reasoning or ''} | Ошибка теггирования".strip(" |")
+            error="tagging_failed: retry_exhausted",
+            reasoning=f"{state.reasoning or ''} | Ошибка: исчерпаны повторные попытки".strip(" |")
+        ).to_dict()
+
+    except (json.JSONDecodeError, ValueError) as e:
+        # Ошибка парсинга или валидации ответа модели
+        return AgentState(
+            thread_id=state.thread_id,
+            user_input=state.user_input,
+            category=state.category,
+            priority=state.priority,
+            tags=None,
+            error=f"tagging_failed: {type(e).__name__}",
+            reasoning=f"{state.reasoning or ''} | Ошибка валидации ответа".strip(" |")
         ).to_dict()

@@ -11,7 +11,6 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from app.agent.state import AgentState
-from app.agent.nodes.tagger import tag_ticket
 from app.agent.nodes.classifier import classify_ticket
 
 

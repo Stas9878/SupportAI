@@ -1,11 +1,18 @@
+from tenacity import RetryError
+
 from app.agent.llm import llm
 from app.agent.state import AgentState
 from app.agent.retry import with_llm_retry
 
 
 @with_llm_retry(max_attempts=3)
+def _classify_llm_call(prompt: str):
+    """Внутренняя функция: только вызов LLM, без бизнес-логики."""
+    return llm.invoke(prompt)
+
+
 def classify_ticket(state: AgentState) -> dict:
-    """Определяет категорию заявки с retry-логикой."""
+    """Определяет категорию заявки с retry и валидацией."""
 
     prompt = f"""Ты классификатор заявок в службу поддержки.
 Определи категорию обращения пользователя.
@@ -23,16 +30,40 @@ def classify_ticket(state: AgentState) -> dict:
 {state.user_input}
 
 Категория:"""
-    response = llm.invoke(prompt)
-    category = response.content.strip().lower()
 
-    valid_categories = {"technical", "billing", "feature", "other"}
-    if category not in valid_categories:
-        category = "other"
+    try:
+        # Вызов LLM с retry (декоратор на внутренней функции)
+        response = _classify_llm_call(prompt)
+        category = response.content.strip().lower()
 
-    return AgentState(
-        thread_id=state.thread_id,
-        user_input=state.user_input,
-        category=category,
-        reasoning=f"Классификация: {category}"
-    ).to_dict()
+        # Inline-валидация: простая проверка для строки
+        valid_categories = {"technical", "billing", "feature", "other"}
+        if category not in valid_categories:
+            category = "other"
+
+        return AgentState(
+            thread_id=state.thread_id,
+            user_input=state.user_input,
+            category=category,
+            reasoning=f"Классификация: {category}"
+        ).to_dict()
+
+    except RetryError as e:
+        # Обработка исчерпания попыток — бизнес-логика в узле
+        return AgentState(
+            thread_id=state.thread_id,
+            user_input=state.user_input,
+            category="other",
+            error=f"classification_failed: retry_exhausted",
+            reasoning="Ошибка классификации: исчерпаны повторные попытки"
+        ).to_dict()
+
+    except Exception as e:
+        # Другие ошибки (например, неожиданный формат ответа)
+        return AgentState(
+            thread_id=state.thread_id,
+            user_input=state.user_input,
+            category="other",
+            error=f"classification_failed: {type(e).__name__}",
+            reasoning="Ошибка классификации, использован дефолт"
+        ).to_dict()
