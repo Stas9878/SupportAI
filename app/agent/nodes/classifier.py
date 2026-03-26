@@ -1,9 +1,11 @@
 from app.agent.llm import llm
 from app.agent.state import AgentState
+from app.agent.retry import with_llm_retry
 
 
+@with_llm_retry(max_attempts=3)
 def classify_ticket(state: AgentState) -> dict:
-    """Определяет категорию заявки."""
+    """Определяет категорию заявки с retry-логикой."""
 
     prompt = f"""Ты классификатор заявок в службу поддержки.
 Определи категорию обращения пользователя.
@@ -21,27 +23,16 @@ def classify_ticket(state: AgentState) -> dict:
 {state.user_input}
 
 Категория:"""
+    response = llm.invoke(prompt)
+    category = response.content.strip().lower()
 
-    try:
-        response = llm.invoke(prompt)
-        category = response.content.strip().lower()
+    valid_categories = {"technical", "billing", "feature", "other"}
+    if category not in valid_categories:
+        category = "other"
 
-        valid_categories = {"technical", "billing", "feature", "other"}
-        if category not in valid_categories:
-            category = "other"
-
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category=category,
-            reasoning=f"Классификация: {category}"
-        ).to_dict()
-
-    except Exception as e:
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category="other",
-            error=f"classification_failed: {str(e)}",
-            reasoning="Ошибка классификации, использован дефолт"
-        ).to_dict()
+    return AgentState(
+        thread_id=state.thread_id,
+        user_input=state.user_input,
+        category=category,
+        reasoning=f"Классификация: {category}"
+    ).to_dict()
