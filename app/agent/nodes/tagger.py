@@ -1,7 +1,9 @@
 import json
+import time
 from tenacity import RetryError
 
 from app.agent.llm import llm
+from app.logging_config import logger
 from app.agent.state import AgentState
 from app.agent.retry import with_llm_retry
 from app.security.sanitizers import (
@@ -20,11 +22,18 @@ def _tag_llm_call(prompt: str):
 def tag_ticket(state: AgentState) -> dict:
     """Назначает теги заявке с санитизацией, защитой от injection и валидацией JSON."""
 
+    start_time = time.time()
+    thread_id = state.thread_id
+
+    logger.debug(f"[{thread_id}] Начало теггирования")
+
     # 1. Проверка длины ввода
     is_valid, error_msg = validate_input_length(state.user_input)
     if not is_valid:
+        elapsed = time.time() - start_time
+        logger.warning(f"[{thread_id}] Превышена длина ввода: {error_msg}")
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -35,8 +44,10 @@ def tag_ticket(state: AgentState) -> dict:
 
     # 2. Проверка на prompt injection
     if check_for_injection(state.user_input):
+        elapsed = time.time() - start_time
+        logger.warning(f"[{thread_id}] Обнаружен prompt injection")
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -82,6 +93,7 @@ api, integration, mobile, web, documentation
 
         # 8. Валидация длины
         if len(tags) > 3:
+            logger.warning(f"[{thread_id}] LLM вернул {len(tags)} тегов, обрезано до 3")
             tags = tags[:3]
 
         # 9. Валидация типов элементов
@@ -93,10 +105,26 @@ api, integration, mobile, web, documentation
             "login", "password", "access", "payment", "billing",
             "bug", "error", "crash", "feature", "ui", "api"
         }
+        original_count = len(tags)
         tags = [t for t in tags if t in valid_tags]
 
+        if len(tags) < original_count:
+            logger.debug(f"[{thread_id}] Отфильтровано {original_count - len(tags)} невалидных тегов")
+
+        elapsed = time.time() - start_time
+
+        logger.info(
+            f"[{thread_id}] Теги назначены: {len(tags)} шт.",
+            extra={
+                "thread_id": thread_id,
+                "tags_count": len(tags),
+                "tags": tags,
+                "elapsed_ms": round(elapsed * 1000, 2)
+            }
+        )
+
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -105,9 +133,14 @@ api, integration, mobile, web, documentation
         ).to_dict()
 
     except RetryError:
+        elapsed = time.time() - start_time
+        logger.error(
+            f"[{thread_id}] Исчерпаны попытки теггирования",
+            extra={"thread_id": thread_id, "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         # Исчерпаны попытки вызова LLM
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -117,9 +150,14 @@ api, integration, mobile, web, documentation
         ).to_dict()
 
     except (json.JSONDecodeError, ValueError) as e:
+        elapsed = time.time() - start_time
+        logger.warning(
+            f"[{thread_id}] Ошибка валидации JSON: {type(e).__name__}",
+            extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         # Ошибка парсинга или валидации ответа модели
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,

@@ -1,6 +1,8 @@
+import time
 from tenacity import RetryError
 
 from app.agent.llm import llm
+from app.logging_config import logger
 from app.agent.state import AgentState
 from app.agent.retry import with_llm_retry
 from app.security.sanitizers import (
@@ -19,11 +21,16 @@ def _classify_llm_call(prompt: str):
 def classify_ticket(state: AgentState) -> dict:
     """Определяет категорию заявки с retry и валидацией."""
 
+    start_time = time.time()
+    thread_id = state.thread_id
+    logger.debug(f"[{thread_id}] Начало классификации")
+
     # 1. Проверка длины ввода
     is_valid, error_msg = validate_input_length(state.user_input)
     if not is_valid:
+        logger.warning(f"[{thread_id}] Превышена длина ввода: {error_msg}")
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category="other",
             error=f"validation_failed: {error_msg}",
@@ -32,8 +39,9 @@ def classify_ticket(state: AgentState) -> dict:
 
     # 2. Проверка на prompt injection
     if check_for_injection(state.user_input):
+        logger.warning(f"[{thread_id}] Обнаружен prompt injection")
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category="other",
             error="potential_injection_detected",
@@ -65,17 +73,30 @@ def classify_ticket(state: AgentState) -> dict:
 Категория:"""
 
     try:
-        # Вызов LLM с retry (декоратор на внутренней функции)
+        # 5. Вызов LLM
         response = _classify_llm_call(prompt)
         category = response.content.strip().lower()
 
-        # Inline-валидация: простая проверка для строки
+        # 6. Inline-валидация
         valid_categories = {"technical", "billing", "feature", "other"}
         if category not in valid_categories:
+            logger.warning(f"[{thread_id}] Невалидная категория от LLM: {category}")
             category = "other"
 
+        elapsed = time.time() - start_time
+
+        # 7. Логирование результата
+        logger.info(
+            f"[{thread_id}] Классификация завершена: {category}",
+            extra={
+                "thread_id": thread_id,
+                "category": category,
+                "elapsed_ms": round(elapsed * 1000, 2)
+            }
+        )
+
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=category,
             reasoning=f"Классификация: {category}"
@@ -83,18 +104,28 @@ def classify_ticket(state: AgentState) -> dict:
 
     except RetryError as e:
         # Обработка исчерпания попыток — бизнес-логика в узле
+        elapsed = time.time() - start_time
+        logger.error(
+            f"[{thread_id}] Исчерпаны попытки классификации",
+            extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category="other",
-            error=f"classification_failed: retry_exhausted",
+            error="classification_failed: retry_exhausted",
             reasoning="Ошибка классификации: исчерпаны повторные попытки"
         ).to_dict()
 
     except Exception as e:
         # Другие ошибки (например, неожиданный формат ответа)
+        elapsed = time.time() - start_time
+        logger.exception(
+            f"[{thread_id}] Неожиданная ошибка классификации",
+            extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category="other",
             error=f"classification_failed: {type(e).__name__}",

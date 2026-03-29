@@ -1,4 +1,7 @@
+import time
 from langgraph.config import RunnableConfig
+
+from app.logging_config import logger
 from app.agent.state import AgentState
 from app.crud import ticket as ticket_crud
 from app.api.schemas.ticket import TicketCreate
@@ -6,16 +9,26 @@ from app.api.schemas.ticket import TicketCreate
 
 async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
     """
-    Сохраняет обработанную заявку в базу данных.
+    Сохраняет обработанную заявку в базу данных с логированием.
 
     Сессия БД извлекается из config["configurable"].
     """
+    start_time = time.time()
+    thread_id = state.thread_id
+
+    logger.debug(f"[{thread_id}] Начало сохранения заявки")
+
     # Извлекаем сессию из конфигурации
     session = config["configurable"].get("session")
 
     if not session:
+        elapsed = time.time() - start_time
+        logger.error(
+            f"[{thread_id}] БД не подключена",
+            extra={"thread_id": thread_id, "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -27,7 +40,7 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
 
     try:
         ticket_in = TicketCreate(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -43,8 +56,21 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
             new_value=state.reasoning
         )
 
+        elapsed = time.time() - start_time
+
+        logger.info(
+            f"[{thread_id}] Заявка сохранена: id={db_ticket.id}",
+            extra={
+                "thread_id": thread_id,
+                "ticket_id": db_ticket.id,
+                "category": state.category,
+                "priority": state.priority,
+                "elapsed_ms": round(elapsed * 1000, 2)
+            }
+        )
+
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
@@ -55,8 +81,13 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
         ).to_dict()
 
     except Exception as e:
+        elapsed = time.time() - start_time
+        logger.exception(
+            f"[{thread_id}] Ошибка сохранения заявки",
+            extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
+        )
         return AgentState(
-            thread_id=state.thread_id,
+            thread_id=thread_id,
             user_input=state.user_input,
             category=state.category,
             priority=state.priority,
