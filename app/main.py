@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
-from app.api.routes import tickets
 from app.db.session import get_engine
+from app.api.routes import tickets, health
 
 
 # Lifespan context manager для инициализации/очистки при старте/остановке
@@ -45,6 +45,7 @@ app.add_middleware(
 
 # Регистрация роутов
 app.include_router(tickets.router)
+app.include_router(health.router)
 
 
 # Health check эндпоинт
