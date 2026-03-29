@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  # Наше приложение
+  app:
+    build: .
+    container_name: support-ai-app
+    ports:
+      - "8000:8000"  # Машина:Контейнер
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy  # Ждём, пока БД будет готова
+      ollama:
+        condition: service_healthy  # Ждём пока ollama будет готова
+    restart: unless-stopped  # Перезапускать при падении, но не после ручной остановки
+    # Сначала миграции, потом запуск приложения
+    command: >
+      sh -c "
+        echo '🔄 Running Alembic migrations...' &&
+        alembic upgrade head &&
+        echo '✅ Migrations complete, starting app...' &&
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2 --log-level info
+      "
+    networks:
+      - support-ai-net
+
+  # PostgreSQL для хранения заявок и чекпоинтов
+  db:
+    image: postgres:18-alpine
+    container_name: support-ai-db
+    environment:
+      POSTGRES_USER: support
+      POSTGRES_PASSWORD: support_pass
+      POSTGRES_DB: support_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # Сохраняем данные между перезапусками
+    ports:
+      - "5432:5432"  # Опционально: доступ к БД с хоста для отладки
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U support -d support_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - support-ai-net
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: support-ai-ollama
+    volumes:
+      - ollama_data:/root/.ollama  # Сохраняем скачанные модели
+    ports:
+      - "11435:11434"
+    entrypoint: ["/bin/sh", "-c"]
+    # Команда для автозагрузки модели (опционально)
+    command: >
+      "ollama serve &
+       sleep 5 &&
+       ollama pull llama3.1:latest &&
+       wait"
+    # Healthcheck для проверки готовности API
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list | grep -q '${OLLAMA_MODEL:-llama3.1:latest}'"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 180s  # 3 минуты на начало скачивания
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G  # Гарантированный минимум
+    networks:
+      - support-ai-net
+
+volumes:
+  postgres_data:  # Именованный том для БД
+  ollama_data:    # Именованный том для моделей Ollama
+
+networks:
+  support-ai-net:  # Изолированная сеть для сервисов
+    driver: bridge
