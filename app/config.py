@@ -1,18 +1,12 @@
 from functools import lru_cache
 
+from pydantic import Field, PostgresDsn, AnyHttpUrl
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, PostgresDsn, AnyHttpUrl, field_validator
 
 
 class Settings(BaseSettings):
     """
     Настройки приложения, загружаемые из переменных окружения.
-
-    Pydantic автоматически:
-    - Загружает значения из .env файла
-    - Валидирует типы и форматы
-    - Предоставляет дефолтные значения
-    - Даёт автодополнение в IDE
     """
 
     model_config = SettingsConfigDict(
