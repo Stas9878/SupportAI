@@ -34,7 +34,7 @@ services:
       POSTGRES_PASSWORD: support_pass
       POSTGRES_DB: support_db
     volumes:
-      - postgres_data:/var/lib/postgresql/data  # Сохраняем данные между перезапусками
+      - postgres_data:/var/lib/postgresql/  # Сохраняем данные между перезапусками
     ports:
       - "5432:5432"  # Опционально: доступ к БД с хоста для отладки
     healthcheck:
