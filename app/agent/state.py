@@ -3,7 +3,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 
 class AgentState(BaseModel):
-    """Состояние агента обработки заявки."""
+    """Состояние агента для обработки заявки."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -17,9 +17,14 @@ class AgentState(BaseModel):
     tags: list[str] | None = None
     reasoning: str | None = None
 
-    # === Управление потоком ===
+    # === Флаги управления ===
     done: bool = False
     alert_sent: bool = False
+
+    # === Поля для HIL ===
+    requires_approval: bool = False  # Требуется ли подтверждение
+    confirmed: bool | None = None    # Результат подтверждения
+    confirmation_message: str | None = None  # Сообщение прерывания
 
     # === Обработка ошибок ===
     error: str | None = None
@@ -34,3 +39,11 @@ class AgentState(BaseModel):
     def needs_alert(self) -> bool:
         """Проверяет, нужно ли отправить Telegram-алерт."""
         return self.priority == "critical" and not self.alert_sent
+
+    def needs_confirmation(self) -> bool:
+        """Проверяет, нужно ли запросить подтверждение пользователя."""
+        return (
+            self.priority == "high"
+            and self.requires_approval
+            and self.confirmed is None
+        )
