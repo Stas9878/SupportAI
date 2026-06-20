@@ -6,7 +6,12 @@ from app.api.schemas.ticket import TicketCreate, TicketUpdate
 from app.db.models import Ticket, TicketHistory, TicketPriority, TicketStatus
 
 
-async def create_ticket(session: AsyncSession, ticket_in: TicketCreate) -> Ticket:
+async def create_ticket(
+    session: AsyncSession,
+    ticket_in: TicketCreate,
+    *,
+    status: TicketStatus | None = None,
+) -> Ticket:
     """
     Создаёт новую заявку в БД.
 
@@ -26,7 +31,7 @@ async def create_ticket(session: AsyncSession, ticket_in: TicketCreate) -> Ticke
         category=ticket_in.category,
         priority=priority_enum,
         tags=ticket_in.tags,
-        status=TicketStatus.NEW
+        status=status or TicketStatus.NEW,
     )
 
     session.add(db_ticket)

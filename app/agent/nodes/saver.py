@@ -5,6 +5,7 @@ from app.logging_config import logger
 from app.agent.state import AgentState
 from app.crud import ticket as ticket_crud
 from app.api.schemas.ticket import TicketCreate
+from app.db.models.ticket import TicketStatus
 
 
 async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
@@ -47,7 +48,18 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
             tags=state.tags
         )
 
-        db_ticket = await ticket_crud.create_ticket(session, ticket_in)
+        # Критичные и подтверждённые HIL-заявки сразу переводим в работу
+        if state.priority == "critical" or (
+            state.requires_approval and state.confirmed is True
+        ):
+            initial_status = TicketStatus.IN_PROGRESS
+        else:
+            initial_status = TicketStatus.NEW
+
+        db_ticket = await ticket_crud.create_ticket(
+            session, ticket_in, status=initial_status
+        )
+
 
         await ticket_crud.add_ticket_history(
             session=session,

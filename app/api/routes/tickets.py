@@ -1,4 +1,6 @@
 import time
+from langgraph.types import Command
+from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -14,6 +16,7 @@ from app.api.schemas.ticket import (
     TicketResponse,
     TicketListResponse
 )
+from app.api.schemas.ticket import ConfirmRequest, ConfirmResponse
 from app.core.dependencies import get_agent_graph, get_telegram_client_context
 
 
@@ -61,8 +64,25 @@ async def create_ticket_endpoint(
             }
         )
 
-    # Обработка ошибок
-    if result_state.get("error"):
+    if "__interrupt__" in result_state:
+        # Заявка ждёт подтверждения — возвращаем специальный статус
+        elapsed = time.time() - start_time
+        logger.info(f"[{thread_id}] Заявка ожидает подтверждения пользователя")
+
+        return TicketResponse(
+            id=0,
+            thread_id=thread_id,
+            user_input=ticket_in.user_input,
+            category=result_state.get("category"),
+            priority=result_state.get("priority"),
+            tags=result_state.get("tags"),
+            status="awaiting_confirmation",
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
+        )
+
+    # Ошибка в state не блокирует успешно сохранённую заявку (stale error из чекпоинта)
+    if result_state.get("error") and not result_state.get("ticket_id"):
         elapsed = time.time() - start_time
         logger.error(
             f"[{thread_id}] Ошибка агента: {result_state['error']}",
@@ -230,3 +250,56 @@ async def delete_ticket_endpoint(
     logger.info(f"Заявка удалена: id={ticket_id}", extra={"ticket_id": ticket_id, "elapsed_ms": round(elapsed * 1000, 2)})
 
     return None
+
+
+@router.post("/confirm", response_model=ConfirmResponse)
+async def confirm_ticket_by_thread(
+    request: ConfirmRequest,
+    db: AsyncSession = Depends(get_db_session),
+) -> ConfirmResponse:
+    """Возобновляет обработку заявки с решением пользователя по thread_id."""
+    settings = get_settings()
+    db_url = str(settings.DATABASE_URL)
+    thread_id = request.thread_id
+
+    logger.info(f"[{thread_id}] Получен запрос на подтверждение заявки")
+
+    async with get_checkpointer(db_url) as checkpointer:
+        graph = get_agent_graph()(checkpointer=checkpointer)
+        snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
+
+        if not snapshot.interrupts:
+            if not snapshot.values:
+                raise HTTPException(status_code=404, detail="Сессия не найдена")
+            raise HTTPException(
+                status_code=400,
+                detail="Нет ожидающего подтверждения для этой сессии",
+            )
+
+        async with get_telegram_client_context() as telegram_client:
+            result = await graph.ainvoke(
+                Command(resume=request.decision),
+                config={
+                    "configurable": {
+                        "thread_id": thread_id,
+                        "session": db,
+                        "telegram_client": telegram_client,
+                    }
+                },
+            )
+
+    confirmed = result.get("confirmed", False)
+    ticket_id = result.get("ticket_id") or 0
+
+    if confirmed and ticket_id:
+        db_ticket = await ticket_crud.get_ticket_by_id(db, ticket_id)
+        ticket_status = db_ticket.status.value
+    else:
+        ticket_status = "rejected"
+
+    return ConfirmResponse(
+        ticket_id=ticket_id,
+        confirmed=confirmed,
+        status=ticket_status,
+        message=result.get("confirmation_message"),
+    )
