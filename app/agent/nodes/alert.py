@@ -28,10 +28,10 @@ async def send_critical_alert(state: AgentState, config: RunnableConfig) -> dict
             reasoning=f"{state.reasoning or ''} | Алерт не отправлен".strip(" |")
         ).to_dict()
 
-    message = f"""🚨 *Критичная заявка*
+    message = f"""⚠️ *Заявка требует внимания*
 
 📋 *Категория:* {state.category or "не определена"}
-🔥 *Приоритет:* {state.priority}
+🔥 *Приоритет:* {state.priority.upper()}
 📝 *Текст:* {state.user_input[:200]}{'...' if len(state.user_input) > 200 else ''}
 🏷️ *Теги:* {', '.join(state.tags) if state.tags else 'нет'}
 🧵 *Сессия:* `{state.thread_id}`
@@ -59,7 +59,7 @@ async def send_critical_alert(state: AgentState, config: RunnableConfig) -> dict
             reasoning=f"{state.reasoning or ''} | Алерт отправлен в Telegram".strip(" |")
         ).to_dict()
 
-    except httpx.HTTPError as e:
+    except (httpx.HTTPError, RuntimeError) as e:
         return AgentState(
             thread_id=state.thread_id,
             user_input=state.user_input,
