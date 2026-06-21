@@ -55,17 +55,25 @@ async def create_ticket_endpoint(
 
         # Компилируем граф с checkpointer для этого запроса
         agent_graph = build_graph(checkpointer=checkpointer)
-
-        result_state = await agent_graph.ainvoke(
-            initial_state,
-            config={
-                "configurable": {
-                    "session": db,
-                    "telegram_client": telegram_client,
-                    "thread_id": thread_id
-                }
+        config = {
+            "configurable": {
+                "session": db,
+                "telegram_client": telegram_client,
+                "thread_id": thread_id,
             }
-        )
+        }
+
+        snapshot = await agent_graph.aget_state(config)
+        if snapshot.values:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Сессия уже существует. "
+                    "Используйте POST /tickets/chat/{thread_id}/messages"
+                ),
+            )
+
+        result_state = await agent_graph.ainvoke(initial_state, config=config)
 
     if "__interrupt__" in result_state:
         # Заявка ждёт подтверждения — возвращаем специальный статус
