@@ -205,5 +205,5 @@ def _generate_response(state, safe_input, thread_id, *, is_goodbye=False) -> str
         if not content:
             return FALLBACK_RESPONSE
         return content
-    except RetryError:
+    except (RetryError, ConnectionError, TimeoutError):
         return FALLBACK_RESPONSE
