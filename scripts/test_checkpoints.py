@@ -1,9 +1,9 @@
 """
-Тест восстановления состояния агента через чекпоинты.
+Скрипт для ручного тестирования восстановления состояния через чекпоинты.
 Запуск: python scripts/test_checkpoints.py
 
-PostgresSaver управляет своими таблицами internally — мы проверяем
-чекпоинты через его API, а не через прямые SQL-запросы.
+Использует реальный PostgresSaver и граф SupportAI.
+Требует: PostgreSQL, Ollama (OLLAMA_BASE_URL).
 """
 import sys
 import asyncio
@@ -15,137 +15,121 @@ if str(project_root) not in sys.path:
 
 from app.config import get_settings
 from app.agent.state import AgentState
-from app.core.dependencies import get_agent_graph
+from app.agent.graph import build_agent_graph
 from app.agent.checkpointer import get_checkpointer
 
 
-async def test_checkpoint_persistence():
-    """Проверяет, что чекпоинты сохраняются и восстанавливаются через PostgresSaver."""
-
-    thread_id = "test_checkpoint_recovery_001"
+async def test_dialog_recovery():
+    """Проверяет восстановление многошагового диалога после «перезапуска» графа."""
     settings = get_settings()
     db_url = str(settings.DATABASE_URL)
+    thread_id = "manual_test_001"
 
-    # Начальное состояние
-    initial_state = AgentState(
-        thread_id=thread_id,
-        user_input="Тестовая заявка для проверки чекпоинтов"
-    )
-    build_graph = get_agent_graph()
+    print(f"🔍 Тест восстановления: thread_id={thread_id}")
+    print(f"📊 База данных: {db_url.split('@')[-1]}")
 
-    # Первый запуск: агент обрабатывает заявку и сохраняет чекпоинты
+    print("\n📌 Прогон 1: создаём диалог")
     async with get_checkpointer(db_url) as checkpointer:
-        agent_graph = build_graph(checkpointer=checkpointer)
-
-        result = await agent_graph.ainvoke(
-            initial_state,
-            config={
-                "configurable": {
-                    "thread_id": thread_id,
-                }
-            }
+        graph = build_agent_graph(checkpointer=checkpointer)
+        result1 = await graph.ainvoke(
+            AgentState(thread_id=thread_id, user_input="Привет, не работает вход"),
+            config={"configurable": {"thread_id": thread_id}},
         )
+        print(f"✅ Ответ: {result1.get('last_response', 'нет ответа')[:60]}...")
+        print(f"✅ Сообщений в истории: {len(result1.get('messages', []))}")
 
-    print(f"✅ Первый запуск завершён: priority={result.get('priority')}, done={result.get('done')}")
-
-    # Проверяем, что чекпоинты записаны через API PostgresSaver
+    print("\n🔄 Эмуляция перезапуска сервера...")
     async with get_checkpointer(db_url) as checkpointer:
-        # Получаем последний чекпоинт для этой сессии
-        config = {"configurable": {"thread_id": thread_id}}
-        checkpoint_tuple = await checkpointer.aget_tuple(config)
+        graph = build_agent_graph(checkpointer=checkpointer)
+        snapshot = await graph.aget_state({"configurable": {"thread_id": thread_id}})
 
-        if checkpoint_tuple:
-            print(f"✅ Чекпоинт найден в БД")
-            print(f"   • checkpoint_id={checkpoint_tuple.config['configurable']['checkpoint_id'][:8]}...")
-            print(f"   • priority={checkpoint_tuple.checkpoint.get('channel_values', {}).get('priority', 'N/A')}")
-        else:
-            print("⚠️  Чекпоинты не найдены в БД")
+        if not snapshot.values:
+            print("❌ История не найдена в чекпоинтере")
             return False
 
-        # Проверяем историю чекпоинтов (список всех для этой сессии)
-        checkpoints = [c async for c in checkpointer.alist(config, limit=10)]
-        print(f"✅ Всего чекпоинтов для сессии: {len(checkpoints)}")
+        messages = snapshot.values.get("messages", [])
+        print(f"✅ История восстановлена: {len(messages)} сообщений")
 
-    # Второй запуск с тем же thread_id: должен восстановить состояние
-    async with get_checkpointer(db_url) as checkpointer:
-        agent_graph = build_graph(checkpointer=checkpointer)
-
-        # Запускаем с минимальным состоянием — чекпоинты должны восстановить контекст
-        restored_result = await agent_graph.ainvoke(
-            {"thread_id": thread_id},
-            config={
-                "configurable": {
-                    "thread_id": thread_id,
-                }
-            }
+        print("\n📌 Прогон 2: продолжаем диалог")
+        result2 = await graph.ainvoke(
+            AgentState(thread_id=thread_id, user_input="Ошибка 401"),
+            config={"configurable": {"thread_id": thread_id}},
         )
+        print(f"✅ Ответ: {result2.get('last_response', 'нет ответа')[:60]}...")
+        print(f"✅ Сообщений в истории: {len(result2.get('messages', []))}")
 
-    print(f"✅ Восстановленное состояние: priority={restored_result.get('priority')}, done={restored_result.get('done')}")
+        if len(result2.get("messages", [])) >= 4:
+            print("🎉 Диалог восстановлен: история накопилась после перезапуска")
+            return True
 
-    # Проверяем, что состояние восстановлено корректно
-    if restored_result.get("done") and restored_result.get("priority"):
-        print("🎉 Чекпоинты работают: состояние восстановлено успешно")
-        return True
-    else:
-        print("❌ Состояние не восстановлено")
+        print("❌ История не накопилась корректно")
         return False
 
 
 async def test_checkpoint_isolation():
     """Проверяет, что чекпоинты изолированы по thread_id."""
-
-    thread_id_1 = "test_isolation_001"
-    thread_id_2 = "test_isolation_002"
-
+    thread_id_1 = "manual_isolation_001"
+    thread_id_2 = "manual_isolation_002"
     settings = get_settings()
     db_url = str(settings.DATABASE_URL)
-    build_graph = get_agent_graph()
 
-    # Запускаем два разных потока с разными данными
     async with get_checkpointer(db_url) as checkpointer:
-        agent_graph = build_graph(checkpointer=checkpointer)
+        graph = build_agent_graph(checkpointer=checkpointer)
 
-        await agent_graph.ainvoke(
+        await graph.ainvoke(
             AgentState(thread_id=thread_id_1, user_input="Запрос 1"),
-            config={"configurable": {"thread_id": thread_id_1}}
+            config={"configurable": {"thread_id": thread_id_1}},
         )
-
-        await agent_graph.ainvoke(
+        await graph.ainvoke(
             AgentState(thread_id=thread_id_2, user_input="Запрос 2"),
-            config={"configurable": {"thread_id": thread_id_2}}
+            config={"configurable": {"thread_id": thread_id_2}},
         )
 
-    # Проверяем, что чекпоинты не пересеклись
-    async with get_checkpointer(db_url) as checkpointer:
-        checkpoints_1 = [c async for c in checkpointer.alist({"configurable": {"thread_id": thread_id_1}})]
-        checkpoints_2 = [c async for c in checkpointer.alist({"configurable": {"thread_id": thread_id_2}})]
+        checkpoints_1 = [
+            c async for c in checkpointer.alist({"configurable": {"thread_id": thread_id_1}})
+        ]
+        checkpoints_2 = [
+            c async for c in checkpointer.alist({"configurable": {"thread_id": thread_id_2}})
+        ]
 
-        if len(checkpoints_1) > 0 and len(checkpoints_2) > 0:
-            print(f"✅ Изоляция сессий работает: session_1={len(checkpoints_1)} чекпоинтов, session_2={len(checkpoints_2)} чекпоинтов")
+        if checkpoints_1 and checkpoints_2:
+            print(
+                f"✅ Изоляция сессий: {thread_id_1}={len(checkpoints_1)} чекпоинтов, "
+                f"{thread_id_2}={len(checkpoints_2)} чекпоинтов"
+            )
             return True
-        else:
-            print("❌ Изоляция сессий не работает")
-            return False
+
+        print("❌ Изоляция сессий не работает")
+        return False
 
 
 async def main():
-    print("🔍 Тестирование чекпоинтов...\n")
+    print("🔍 Тестирование чекпоинтов SupportAI\n")
 
-    print("📌 Тест 1: Сохранение и восстановление состояния")
+    print("📌 Тест 1: Восстановление многошагового диалога")
     print("-" * 50)
-    test1 = await test_checkpoint_persistence()
+    try:
+        test1 = await test_dialog_recovery()
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        import traceback
+        traceback.print_exc()
+        test1 = False
 
     print("\n📌 Тест 2: Изоляция сессий по thread_id")
     print("-" * 50)
-    test2 = await test_checkpoint_isolation()
+    try:
+        test2 = await test_checkpoint_isolation()
+    except Exception as e:
+        print(f"❌ Ошибка: {e}")
+        test2 = False
 
     print("\n" + "=" * 50)
     if test1 and test2:
         print("✅ Все тесты пройдены")
         return 0
-    else:
-        print("❌ Некоторые тесты не пройдены")
-        return 1
+    print("❌ Некоторые тесты не пройдены")
+    return 1
 
 
 if __name__ == "__main__":
