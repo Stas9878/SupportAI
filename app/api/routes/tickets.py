@@ -14,9 +14,12 @@ from app.api.schemas.ticket import (
     TicketCreate,
     TicketUpdate,
     TicketResponse,
-    TicketListResponse
+    TicketListResponse,
+    ConfirmRequest,
+    ConfirmResponse,
+    ChatMessage,
+    ChatResponse
 )
-from app.api.schemas.ticket import ConfirmRequest, ConfirmResponse
 from app.core.dependencies import get_agent_graph, get_telegram_client_context
 
 
@@ -118,7 +121,118 @@ async def create_ticket_endpoint(
         }
     )
 
-    return TicketResponse.model_validate(db_ticket)
+    return TicketResponse.model_validate(db_ticket).model_copy(
+        update={
+            "last_response": result_state.get("last_response"),
+            "messages_count": len(result_state.get("messages", [])),
+        }
+    )
+
+
+@router.post("/chat/{thread_id}/messages", response_model=ChatResponse)
+async def send_message_to_chat(
+    thread_id: str,
+    request: ChatMessage,
+    db: AsyncSession = Depends(get_db_session),
+    settings: Settings = Depends(get_settings),
+) -> ChatResponse:
+    """
+    Отправляет сообщение в существующую сессию диалога.
+
+    Граф загружает историю из чекпоинтера, добавляет новое сообщение
+    и генерирует ответ агента.
+    """
+    start_time = time.time()
+    logger.info(f"[{thread_id}] Получено новое сообщение в диалог")
+
+    db_url = str(settings.DATABASE_URL)
+    build_graph = get_agent_graph()
+    config_base = {"configurable": {"thread_id": thread_id}}
+
+    async with get_checkpointer(db_url) as checkpointer, \
+               get_telegram_client_context() as telegram_client:
+
+        agent_graph = build_graph(checkpointer=checkpointer)
+        config = {
+            "configurable": {
+                **config_base["configurable"],
+                "session": db,
+                "telegram_client": telegram_client,
+            }
+        }
+
+        snapshot = await agent_graph.aget_state(config)
+        if not snapshot.values:
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+        if snapshot.values.get("dialog_closed"):
+            raise HTTPException(status_code=400, detail="Диалог завершён")
+        if snapshot.interrupts:
+            raise HTTPException(
+                status_code=400,
+                detail="Заявка ожидает подтверждения",
+            )
+
+        result_state = await agent_graph.ainvoke(
+            AgentState(thread_id=thread_id, user_input=request.content),
+            config=config,
+        )
+
+    if "__interrupt__" in result_state:
+        raise HTTPException(
+            status_code=400,
+            detail="Заявка ожидает подтверждения",
+        )
+
+    elapsed = time.time() - start_time
+    messages = result_state.get("messages", [])
+    logger.info(
+        f"[{thread_id}] Диалог обновлён: {len(messages)} сообщений в истории",
+        extra={
+            "thread_id": thread_id,
+            "messages_count": len(messages),
+            "dialog_closed": result_state.get("dialog_closed", False),
+            "elapsed_ms": round(elapsed * 1000, 2),
+        },
+    )
+
+    return ChatResponse(
+        thread_id=thread_id,
+        messages=messages,
+        last_response=result_state.get("last_response"),
+        done=result_state.get("dialog_closed", False),
+        ticket_id=result_state.get("ticket_id"),
+        category=result_state.get("category"),
+        priority=result_state.get("priority"),
+    )
+
+
+@router.get("/chat/{thread_id}", response_model=ChatResponse)
+async def get_chat_history(
+    thread_id: str,
+    settings: Settings = Depends(get_settings),
+) -> ChatResponse:
+    """Получает историю диалога без отправки нового сообщения."""
+    db_url = str(settings.DATABASE_URL)
+    build_graph = get_agent_graph()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    async with get_checkpointer(db_url) as checkpointer:
+        agent_graph = build_graph(checkpointer=checkpointer)
+        snapshot = await agent_graph.aget_state(config)
+
+    if not snapshot.values:
+        raise HTTPException(status_code=404, detail="Сессия не найдена")
+
+    values = snapshot.values
+    return ChatResponse(
+        thread_id=thread_id,
+        messages=values.get("messages", []),
+        last_response=values.get("last_response"),
+        done=values.get("dialog_closed", False),
+        ticket_id=values.get("ticket_id"),
+        category=values.get("category"),
+        priority=values.get("priority"),
+    )
 
 
 @router.get("/{ticket_id}", response_model=TicketResponse)
