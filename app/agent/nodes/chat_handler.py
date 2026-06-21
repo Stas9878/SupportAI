@@ -16,7 +16,7 @@ MAX_MESSAGES = 50
 # Сколько последних сообщений передаём в промпт LLM
 MAX_CONTEXT_MESSAGES = 10
 
-GOODBYE_WORDS = ("пока", "до свидания", "спасибо")
+GOODBYE_WORDS = ("пока", "до свидания")
 
 FALLBACK_RESPONSE = (
     "Сейчас не могу сформировать ответ. Попробуйте переформулировать вопрос "
@@ -99,7 +99,13 @@ def chat_handler(state: AgentState) -> dict:
 
 def _is_goodbye_message(user_content_lower: str) -> bool:
     """Проверяет, прощается ли пользователь."""
-    return any(word in user_content_lower for word in GOODBYE_WORDS)
+    if any(word in user_content_lower for word in GOODBYE_WORDS):
+        return True
+    if "спасибо" in user_content_lower and (
+        "пока" in user_content_lower or "до свидания" in user_content_lower
+    ):
+        return True
+    return False
 
 
 def _build_history_block(messages: list[dict]) -> str:
@@ -176,7 +182,6 @@ def _build_goodbye_prompt(state: AgentState, safe_input: str) -> str:
 - НЕ задавай вопросов и НЕ давай новых инструкций.
 - НЕ повторяй советы из истории (пароль, ошибки, оплата и т.д.).
 - НЕ продолжай решать проблему — диалог закрывается.
-- Не упоминай, что ты языковая модель или ИИ.
 
 === ИСТОРИЯ ДИАЛОГА (только для тона, не для новых советов) ===
 {history_block}
@@ -188,14 +193,7 @@ def _build_goodbye_prompt(state: AgentState, safe_input: str) -> str:
 Прощальный ответ ассистента:"""
 
 
-def _generate_response(
-    state: AgentState,
-    safe_input: str,
-    thread_id: str,
-    *,
-    is_goodbye: bool = False,
-) -> str:
-    """Генерирует ответ ассистента через LLM с учётом истории диалога."""
+def _generate_response(state, safe_input, thread_id, *, is_goodbye=False) -> str:
     if is_goodbye:
         prompt = _build_goodbye_prompt(state, safe_input)
     else:
@@ -205,20 +203,7 @@ def _generate_response(
         response = _chat_llm_call(prompt)
         content = (response.content or "").strip()
         if not content:
-            logger.warning(f"[{thread_id}] LLM вернул пустой ответ")
             return FALLBACK_RESPONSE
         return content
-
-    except RetryError as e:
-        logger.error(
-            f"[{thread_id}] Исчерпаны попытки генерации ответа",
-            extra={"thread_id": thread_id, "error": str(e)},
-        )
-        return FALLBACK_RESPONSE
-
-    except Exception as e:
-        logger.exception(
-            f"[{thread_id}] Ошибка генерации ответа",
-            extra={"thread_id": thread_id, "error": str(e)},
-        )
+    except RetryError:
         return FALLBACK_RESPONSE

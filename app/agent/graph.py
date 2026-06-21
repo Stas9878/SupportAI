@@ -8,7 +8,7 @@ from app.agent.nodes.alert import send_critical_alert
 from app.agent.nodes.chat_handler import chat_handler
 from app.agent.nodes.classifier import classify_ticket
 from app.agent.nodes.prioritizer import prioritize_ticket
-from app.agent.nodes.confirmation import confirmation_node  # ← Новый импорт
+from app.agent.nodes.confirmation import confirmation_node
 
 
 def route_after_chat(state: AgentState) -> str:
@@ -68,7 +68,7 @@ def build_agent_graph(checkpointer: BaseCheckpointSaver | None = None):
     workflow.add_node("tagger", tag_ticket)
     workflow.add_node("alert", send_critical_alert)
     workflow.add_node("saver", save_ticket)
-    workflow.add_node("confirmation", confirmation_node)  # ← Новый узел
+    workflow.add_node("confirmation", confirmation_node)
     workflow.add_node("dialog_end", dialog_end)
     workflow.add_node("end", lambda s: {"dialog_closed": True})  # ← Узел-заглушка для отклонённых
 

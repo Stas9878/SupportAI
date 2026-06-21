@@ -79,6 +79,15 @@ class TestChatHandler:
         assert "Приоритет: high" in prompt
 
     @patch("app.agent.nodes.chat_handler._chat_llm_call")
+    def test_thanks_without_goodbye_does_not_close_dialog(self, mock_llm):
+        mock_llm.return_value = _mock_llm_response("Рады были помочь!")
+
+        state = AgentState(thread_id="t1", user_input="Спасибо, помогло!")
+        result = chat_handler(state)
+
+        assert result.get("dialog_closed") is not True
+
+    @patch("app.agent.nodes.chat_handler._chat_llm_call")
     def test_goodbye_sets_dialog_closed(self, mock_llm):
         mock_llm.return_value = _mock_llm_response("Всего доброго! Обращайтесь ещё.")
 
