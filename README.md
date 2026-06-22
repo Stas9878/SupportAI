@@ -10,10 +10,12 @@
 ## Описание
 
 
-SupportAI принимает пользовательские запросы, анализирует их с помощью цепочки AI-агентов и автоматически:
+SupportAI принимает пользовательские запросы, ведёт многошаговый диалог с накоплением истории и автоматически:
+- **Отвечает пользователю** через LLM с учётом истории диалога и контекста заявки
 - **Классифицирует** заявку по категориям (техническая, биллинг, фича, другое)
 - **Определяет приоритет** (critical, high, medium, low) на основе срочности
 - **Назначает релевантные теги** для быстрой маршрутизации
+- **Запрашивает подтверждение (HIL)** для чувствительных операций с высоким приоритетом
 - **Сохраняет результат** в базу данных и отправляет алерты при критичных проблемах
 
 
@@ -30,13 +32,15 @@ SupportAI принимает пользовательские запросы, а
 
 
 - 🤖 **Автоматическая обработка заявок** через граф агентов с условными переходами
+- 💬 **Многошаговый диалог** с историей сообщений в чекпоинтере (`operator.add`)
+- 👤 **Human-in-the-Loop** — подтверждение чувствительных заявок через `interrupt()`
 - ♻️ **Восстановление состояния** после сбоев благодаря чекпоинтам в PostgreSQL
 - 🔁 **Retry-логика** с экспоненциальной задержкой для устойчивости к временным сбоям
 - 🛡️ **Защита от prompt injection** и санитизация пользовательского ввода
 - 📊 **Структурированное логирование** в JSON-формате для интеграции с системами мониторинга
-- 📱 **Telegram-алерты** для критичных заявок в реальном времени
+- 📱 **Telegram-алерты** для critical и high+requires_approval заявок
 - 🐳 **Docker-ready** — запуск одной командой со всеми зависимостями
-- ✅ **Unit-тесты** для критичных модулей с моками внешних зависимостей
+- ✅ **Unit-тесты** для критичных модулей, истории диалога и восстановления после сбоев
 
 
 ## Структура проекта
@@ -70,14 +74,16 @@ support-ai/
 │   │
 │   ├── agent/                    # Агент на LangGraph
 │   │   ├── graph.py              # Сборка графа и переходов
-│   │   ├── state.py              # AgentState: схема состояния
+│   │   ├── state.py              # AgentState: история, HIL, флаги
 │   │   ├── llm.py                # Настройка LLM (Ollama)
 │   │   ├── checkpointer.py       # PostgresSaver для чекпоинтов
 │   │   ├── retry.py              # Retry-декоратор для LLM
 │   │   └── nodes/
+│   │       ├── chat_handler.py   # LLM-диалог и накопление messages
 │   │       ├── classifier.py     # Классификация заявок
-│   │       ├── prioritizer.py    # Определение приоритета
+│   │       ├── prioritizer.py    # Определение приоритета и requires_approval
 │   │       ├── tagger.py         # Назначение тегов
+│   │       ├── confirmation.py   # HIL: interrupt() и подтверждение
 │   │       ├── saver.py          # Сохранение в БД
 │   │       └── alert.py          # Telegram-алерты
 │   │
@@ -98,7 +104,9 @@ support-ai/
 │       └── sanitizers.py         # Санитизация ввода и защита от injection
 │
 ├── tests/
-│   └── test_critical.py          # Unit-тесты критичных модулей
+│   ├── test_critical.py          # Unit-тесты безопасности, retry, классификатора
+│   ├── test_chat_history.py      # Unit-тесты chat_handler и маршрутизации
+│   └── test_recovery.py          # Unit-тесты восстановления после сбоев
 │
 └── scripts/                      # Вспомогательные скрипты
     ├── check_env.py              # Проверка переменных окружения
@@ -106,7 +114,7 @@ support-ai/
     ├── test_logging.py           # Тест логирования
     ├── test_retry.py             # Тест retry-логики
     ├── test_security.py          # Тест санитизации
-    ├── test_checkpoints.py       # Тест чекпоинтов
+    ├── test_checkpoints.py       # Ручной тест чекпоинтов и диалога
     └── cleanup_checkpoints.py    # Очистка старых чекпоинтов
 ```
 
@@ -247,7 +255,9 @@ uvicorn app.main:app --reload
 ### `POST /tickets/`
 
 
-Создание новой заявки с обработкой через агента.
+Создание новой заявки и **первое сообщение** в диалоге. Запускает полный пайплайн агента (chat → classifier → … → saver).
+
+Повторный вызов с тем же `thread_id` возвращает **409 Conflict** — для follow-up используйте `POST /tickets/chat/{thread_id}/messages`.
 
 
 **Запрос:**
@@ -269,7 +279,96 @@ uvicorn app.main:app --reload
   "priority": "high",
   "tags": ["login", "error"],
   "status": "new",
+  "last_response": "Проверьте логин и пароль...",
+  "messages_count": 2,
   "created_at": "2026-03-29T10:00:00"
+}
+```
+
+
+**Ответ (HIL — ожидает подтверждения):**
+```json
+{
+  "id": 0,
+  "thread_id": "user_session_123",
+  "priority": "high",
+  "status": "awaiting_confirmation"
+}
+```
+
+
+### `POST /tickets/chat/{thread_id}/messages`
+
+
+Follow-up сообщение в существующую сессию. История загружается из чекпоинтера, пайплайн классификации не перезапускается.
+
+
+**Запрос:**
+```json
+{
+  "content": "Ошибка 401 при вводе пароля"
+}
+```
+
+
+**Ответ:**
+```json
+{
+  "thread_id": "user_session_123",
+  "messages": [
+    {"role": "user", "content": "Не могу войти в аккаунт"},
+    {"role": "assistant", "content": "Проверьте логин и пароль..."},
+    {"role": "user", "content": "Ошибка 401 при вводе пароля"},
+    {"role": "assistant", "content": "Ошибка 401 означает..."}
+  ],
+  "last_response": "Ошибка 401 означает...",
+  "done": false,
+  "ticket_id": 1,
+  "category": "technical",
+  "priority": "high"
+}
+```
+
+Поле `done` отражает `dialog_closed` (диалог завершён пользователем), а не `done` от saver.
+
+**Коды ошибок:**
+| Код | Ситуация |
+|-----|----------|
+| `404` | Сессия с `thread_id` не найдена |
+| `400` | Диалог уже закрыт или заявка ждёт HIL-подтверждения |
+
+
+### `GET /tickets/chat/{thread_id}`
+
+
+Получение истории диалога без отправки нового сообщения и без вызова LLM.
+
+
+**Ответ:** тот же формат, что у `POST /tickets/chat/{thread_id}/messages`.
+
+
+### `POST /tickets/confirm`
+
+
+Подтверждение или отклонение заявки в статусе HIL (`awaiting_confirmation`). Использует `thread_id`, не `ticket_id`.
+
+
+**Запрос:**
+```json
+{
+  "thread_id": "user_session_123",
+  "decision": "yes"
+}
+```
+
+
+**Ответ:**
+```json
+{
+  "ticket_id": 42,
+  "confirmed": true,
+  "status": "in_progress",
+  "message": null
 }
 ```
 
@@ -331,6 +430,36 @@ uvicorn app.main:app --reload
 Удаление заявки. Возвращает `204 No Content`.
 
 
+### Пример сценария: многошаговый диалог
+
+
+```bash
+# 1. Первое сообщение — создание заявки и запуск пайплайна
+curl -X POST http://localhost:8000/tickets/ \
+  -H "Content-Type: application/json" \
+  -d '{"thread_id": "demo_1", "user_input": "Не могу войти в аккаунт"}'
+
+# 2. Follow-up — история подтягивается из чекпоинтера
+curl -X POST http://localhost:8000/tickets/chat/demo_1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Ошибка 401 при вводе пароля"}'
+
+# 3. История без нового сообщения
+curl http://localhost:8000/tickets/chat/demo_1
+
+# 4. Завершение диалога (прощание пользователя)
+curl -X POST http://localhost:8000/tickets/chat/demo_1/messages \
+  -H "Content-Type: application/json" \
+  -d '{"content": "Спасибо, всё понятно, до свидания!"}'
+# → done: true, дальнейшие POST вернут 400
+
+# 5. HIL: если POST /tickets/ вернул status: awaiting_confirmation
+curl -X POST http://localhost:8000/tickets/confirm \
+  -H "Content-Type: application/json" \
+  -d '{"thread_id": "demo_1", "decision": "yes"}'
+```
+
+
 ## Как это работает
 
 
@@ -338,38 +467,52 @@ uvicorn app.main:app --reload
 
 
 ```
-Пользовательский запрос
+Новое сообщение пользователя
         ↓
 ┌─────────────────┐
-│   classifier    │ → Категория: technical/billing/feature/other
+│  chat_handler   │ → LLM-ответ + messages (user + assistant)
 └────────┬────────┘
          ↓
-┌─────────────────┐
-│  prioritizer    │ → Приоритет: critical/high/medium/low
-└────────┬────────┘
-         ↓
-┌─────────────────┐
-│     tagger      │ → Теги: [login, error, ...] (0-3 шт.)
-└────────┬────────┘
+    ┌────┴────────────────┐
+    ↓                     ↓
+ dialog_closed?      ticket_id есть?
+    ↓                     ↓
+  end               dialog_end → END (follow-up)
+    ↓
+ classifier → prioritizer → tagger
          ↓
     ┌────┴────┐
     ↓         ↓
-┌───────┐ ┌───────┐
-│ alert │ │ saver │ → Критичный? → Telegram
-└───┬───┘ └───┬───┘    Обычный → Сохранить в БД
-    │         │
-    └────┬────┘
-         ↓
-   Возврат результата
+ alert    saver (или alert → confirmation → saver)
+    ↓
+ Telegram / HIL interrupt
 ```
+
+
+**Маршрутизация после chat:**
+- `dialog_closed=True` — пользователь попрощался, диалог закрыт
+- `ticket_id is not None` — follow-up, ответ уже сгенерирован, saver не перезапускается
+- иначе — первое сообщение, полный пайплайн классификации
+
+**HIL:** для `high + requires_approval` граф прерывается на `confirmation_node` (`interrupt()`). Возобновление — через `POST /tickets/confirm` с `Command(resume=...)`.
+
+
+**Состояние агента (`AgentState`):**
+- `messages` — накопление истории через `operator.add` (каждый вызов chat добавляет пару user/assistant)
+- `done` — заявка сохранена в БД (saver)
+- `dialog_closed` — пользователь попрощался; API отдаёт это как `ChatResponse.done`
+- `ticket_id` — после первого сохранения; follow-up идёт через `dialog_end` без повторной классификации
+
+**Устойчивость chat_handler:** при исчерпании retry или недоступности Ollama возвращается fallback-ответ, диалог не падает с ошибкой.
 
 
 ### Чекпоинты и восстановление
 
 
-1. После каждого узла графа состояние сохраняется в PostgreSQL
+1. После каждого узла графа состояние сохраняется в PostgreSQL (включая `messages` через `operator.add`)
 2. При сбое или перезапуске агент восстанавливается с последнего чекпоинта
 3. `thread_id` в `config["configurable"]` обеспечивает изоляцию сессий пользователей
+4. Follow-up сообщения накапливают историю без повторного создания заявки (`dialog_end`)
 
 
 ### Безопасность ввода
@@ -398,15 +541,38 @@ uvicorn app.main:app --reload
 
 ```bash
 pytest tests/ -v
+# 48 тестов: critical, chat_history, recovery
 ```
 
 
-### Запуск только критичных тестов
+| Файл | Что покрывает |
+|------|----------------|
+| `test_critical.py` | Санитизация, retry, классификатор |
+| `test_chat_history.py` | chat_handler, маршрутизация, прощание |
+| `test_recovery.py` | Retry/fallback LLM, перезапуск диалога, HIL resume |
+
+
+### Запуск отдельных наборов
 
 
 ```bash
 pytest tests/test_critical.py -v
+pytest tests/test_chat_history.py -v
+pytest tests/test_recovery.py -v
 ```
+
+
+Unit-тесты восстановления используют `InMemorySaver` и не требуют PostgreSQL.
+
+
+### Ручная проверка чекпоинтов
+
+
+```bash
+python scripts/test_checkpoints.py
+```
+
+Требует PostgreSQL и Ollama. Проверяет восстановление многошагового диалога после «перезапуска» графа.
 
 
 ### Запуск тестов в Docker
@@ -437,7 +603,7 @@ pytest tests/ --cov=app --cov-report=html
 | `test_logging.py` | Тест логирования | `python scripts/test_logging.py` |
 | `test_retry.py` | Тест retry-логики | `python scripts/test_retry.py` |
 | `test_security.py` | Тест санитизации | `python scripts/test_security.py` |
-| `test_checkpoints.py` | Тест чекпоинтов | `python scripts/test_checkpoints.py` |
+| `test_checkpoints.py` | Ручной тест диалога и изоляции чекпоинтов | `python scripts/test_checkpoints.py` |
 | `cleanup_checkpoints.py` | Очистка старых чекпоинтов | `python scripts/cleanup_checkpoints.py --keep 50` |
 
 
