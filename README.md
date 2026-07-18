@@ -689,7 +689,8 @@ docker compose logs -f app > logs/app.log
 
 
 1. Создайте файл в `app/agent/nodes/your_node.py`
-2. Реализуйте функцию с сигнатурой `(state: AgentState) -> dict`
+2. Реализуйте функцию с сигнатурой `(state: AgentState) -> dict`:
+   возвращайте **только изменённые поля** (дельту), без сборки полного `AgentState`
 3. Добавьте узел в `app/agent/graph.py`:
    ```python
    workflow.add_node("your_node", your_function)

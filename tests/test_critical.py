@@ -237,19 +237,6 @@ class TestAgentState:
         assert state.category == "technical"
         assert state.priority == "critical"
 
-    def test_to_dict_excludes_unset(self):
-        """to_dict() возвращает только установленные поля."""
-        state = AgentState(
-            thread_id="test",
-            user_input="test",
-            category="billing"
-        )
-        result = state.to_dict()
-        assert "thread_id" in result
-        assert "user_input" in result
-        assert "category" in result
-        assert "priority" not in result  # не установлен
-
     def test_needs_alert_logic(self):
         """Метод needs_alert() работает корректно."""
         # Критичный приоритет + алерт не отправлен → нужен алерт
@@ -296,7 +283,7 @@ class TestClassifyTicket:
 
         assert result["category"] == "technical"
         assert "error" not in result
-        assert result["thread_id"] == "test_001"
+        assert "thread_id" not in result  # узел возвращает только дельту
 
     def test_fallback_on_invalid_category(self, mock_state):
         """Невалидная категория от LLM заменяется на дефолт."""

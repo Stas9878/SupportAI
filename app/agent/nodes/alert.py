@@ -17,16 +17,11 @@ async def send_critical_alert(state: AgentState, config: RunnableConfig) -> dict
     telegram_client = config["configurable"].get("telegram_client")
 
     if not telegram_client or not settings.TELEGRAM_CHAT_ID:
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            alert_sent=False,
-            error=f"{state.error or ''} alert_failed: Telegram не настроен".strip(),
-            reasoning=f"{state.reasoning or ''} | Алерт не отправлен".strip(" |")
-        ).to_dict()
+        return {
+            "alert_sent": False,
+            "error": f"{state.error or ''} alert_failed: Telegram не настроен".strip(),
+            "reasoning": f"{state.reasoning or ''} | Алерт не отправлен".strip(" |"),
+        }
 
     message = f"""⚠️ *Заявка требует внимания*
 
@@ -49,24 +44,14 @@ async def send_critical_alert(state: AgentState, config: RunnableConfig) -> dict
         )
         response.raise_for_status()
 
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            alert_sent=True,
-            reasoning=f"{state.reasoning or ''} | Алерт отправлен в Telegram".strip(" |")
-        ).to_dict()
+        return {
+            "alert_sent": True,
+            "reasoning": f"{state.reasoning or ''} | Алерт отправлен в Telegram".strip(" |"),
+        }
 
     except (httpx.HTTPError, RuntimeError) as e:
-        return AgentState(
-            thread_id=state.thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            alert_sent=False,
-            error=f"{state.error or ''} alert_failed: {str(e)}".strip(),
-            reasoning=f"{state.reasoning or ''} | Ошибка отправки алерта".strip(" |")
-        ).to_dict()
+        return {
+            "alert_sent": False,
+            "error": f"{state.error or ''} alert_failed: {str(e)}".strip(),
+            "reasoning": f"{state.reasoning or ''} | Ошибка отправки алерта".strip(" |"),
+        }

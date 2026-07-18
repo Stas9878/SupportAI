@@ -31,27 +31,21 @@ def prioritize_ticket(state: AgentState) -> dict:
     if not is_valid:
         elapsed = time.time() - start_time
         logger.warning(f"[{thread_id}] Превышена длина ввода: {error_msg}")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority="medium",
-            error=f"validation_failed: {error_msg}",
-            reasoning="Ошибка валидации ввода"
-        ).to_dict()
+        return {
+            "priority": "medium",
+            "error": f"validation_failed: {error_msg}",
+            "reasoning": "Ошибка валидации ввода",
+        }
 
     # 2. Проверка на prompt injection
     if check_for_injection(state.user_input):
         elapsed = time.time() - start_time
         logger.warning(f"[{thread_id}] Обнаружен prompt injection")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority="medium",
-            error="potential_injection_detected",
-            reasoning="Обнаружена попытка prompt injection"
-        ).to_dict()
+        return {
+            "priority": "medium",
+            "error": "potential_injection_detected",
+            "reasoning": "Обнаружена попытка prompt injection",
+        }
 
     # 3. Санитизация ввода
     safe_input = sanitize_input(state.user_input)
@@ -113,14 +107,11 @@ def prioritize_ticket(state: AgentState) -> dict:
             }
         )
 
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=priority,
-            reasoning=f"{state.reasoning or ''} | Приоритет: {priority}".strip(" |"),
-            requires_approval=requires_approval
-        ).to_dict()
+        return {
+            "priority": priority,
+            "reasoning": f"{state.reasoning or ''} | Приоритет: {priority}".strip(" |"),
+            "requires_approval": requires_approval,
+        }
 
     except RetryError:
         elapsed = time.time() - start_time
@@ -128,14 +119,11 @@ def prioritize_ticket(state: AgentState) -> dict:
             f"[{thread_id}] Исчерпаны попытки приоритизации",
             extra={"thread_id": thread_id, "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority="medium",
-            error="prioritization_failed: retry_exhausted",
-            reasoning=f"{state.reasoning or ''} | Ошибка: исчерпаны повторные попытки".strip(" |")
-        ).to_dict()
+        return {
+            "priority": "medium",
+            "error": "prioritization_failed: retry_exhausted",
+            "reasoning": f"{state.reasoning or ''} | Ошибка: исчерпаны повторные попытки".strip(" |"),
+        }
 
     except Exception as e:
         elapsed = time.time() - start_time
@@ -143,11 +131,8 @@ def prioritize_ticket(state: AgentState) -> dict:
             f"[{thread_id}] Неожиданная ошибка приоритизации",
             extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority="medium",
-            error=f"prioritization_failed: {type(e).__name__}",
-            reasoning=f"{state.reasoning or ''} | Ошибка приоритизации".strip(" |")
-        ).to_dict()
+        return {
+            "priority": "medium",
+            "error": f"prioritization_failed: {type(e).__name__}",
+            "reasoning": f"{state.reasoning or ''} | Ошибка приоритизации".strip(" |"),
+        }

@@ -38,10 +38,6 @@ class AgentState(BaseModel):
     # === Дополнительные поля ===
     ticket_id: int | None = None
 
-    def to_dict(self) -> dict:
-        """Конвертирует состояние в dict для обновления в LangGraph."""
-        return self.model_dump(exclude_unset=True)
-
     def needs_alert(self) -> bool:
         """Проверяет, нужно ли отправить Telegram-алерт."""
         return self.priority == "critical" and not self.alert_sent

@@ -32,29 +32,21 @@ def tag_ticket(state: AgentState) -> dict:
     if not is_valid:
         elapsed = time.time() - start_time
         logger.warning(f"[{thread_id}] Превышена длина ввода: {error_msg}")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=None,
-            error=f"validation_failed: {error_msg}",
-            reasoning=f"{state.reasoning or ''} | Ошибка валидации ввода".strip(" |")
-        ).to_dict()
+        return {
+            "tags": None,
+            "error": f"validation_failed: {error_msg}",
+            "reasoning": f"{state.reasoning or ''} | Ошибка валидации ввода".strip(" |"),
+        }
 
     # 2. Проверка на prompt injection
     if check_for_injection(state.user_input):
         elapsed = time.time() - start_time
         logger.warning(f"[{thread_id}] Обнаружен prompt injection")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=None,
-            error="potential_injection_detected",
-            reasoning=f"{state.reasoning or ''} | Обнаружена попытка prompt injection".strip(" |")
-        ).to_dict()
+        return {
+            "tags": None,
+            "error": "potential_injection_detected",
+            "reasoning": f"{state.reasoning or ''} | Обнаружена попытка prompt injection".strip(" |"),
+        }
 
     # 3. Санитизация ввода
     safe_input = sanitize_input(state.user_input)
@@ -123,14 +115,10 @@ api, integration, mobile, web, documentation
             }
         )
 
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=tags if tags else None,
-            reasoning=f"{state.reasoning or ''} | Теги: {tags}".strip(" |")
-        ).to_dict()
+        return {
+            "tags": tags if tags else None,
+            "reasoning": f"{state.reasoning or ''} | Теги: {tags}".strip(" |"),
+        }
 
     except RetryError:
         elapsed = time.time() - start_time
@@ -138,16 +126,11 @@ api, integration, mobile, web, documentation
             f"[{thread_id}] Исчерпаны попытки теггирования",
             extra={"thread_id": thread_id, "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        # Исчерпаны попытки вызова LLM
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=None,
-            error="tagging_failed: retry_exhausted",
-            reasoning=f"{state.reasoning or ''} | Ошибка: исчерпаны повторные попытки".strip(" |")
-        ).to_dict()
+        return {
+            "tags": None,
+            "error": "tagging_failed: retry_exhausted",
+            "reasoning": f"{state.reasoning or ''} | Ошибка: исчерпаны повторные попытки".strip(" |"),
+        }
 
     except (json.JSONDecodeError, ValueError) as e:
         elapsed = time.time() - start_time
@@ -155,13 +138,8 @@ api, integration, mobile, web, documentation
             f"[{thread_id}] Ошибка валидации JSON: {type(e).__name__}",
             extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        # Ошибка парсинга или валидации ответа модели
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=None,
-            error=f"tagging_failed: {type(e).__name__}",
-            reasoning=f"{state.reasoning or ''} | Ошибка валидации ответа".strip(" |")
-        ).to_dict()
+        return {
+            "tags": None,
+            "error": f"tagging_failed: {type(e).__name__}",
+            "reasoning": f"{state.reasoning or ''} | Ошибка валидации ответа".strip(" |"),
+        }

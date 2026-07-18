@@ -29,24 +29,20 @@ def classify_ticket(state: AgentState) -> dict:
     is_valid, error_msg = validate_input_length(state.user_input)
     if not is_valid:
         logger.warning(f"[{thread_id}] Превышена длина ввода: {error_msg}")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category="other",
-            error=f"validation_failed: {error_msg}",
-            reasoning="Ошибка валидации ввода"
-        ).to_dict()
+        return {
+            "category": "other",
+            "error": f"validation_failed: {error_msg}",
+            "reasoning": "Ошибка валидации ввода",
+        }
 
     # 2. Проверка на prompt injection
     if check_for_injection(state.user_input):
         logger.warning(f"[{thread_id}] Обнаружен prompt injection")
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category="other",
-            error="potential_injection_detected",
-            reasoning="Обнаружена попытка prompt injection"
-        ).to_dict()
+        return {
+            "category": "other",
+            "error": "potential_injection_detected",
+            "reasoning": "Обнаружена попытка prompt injection",
+        }
 
     # 3. Санитизация ввода
     safe_input = sanitize_input(state.user_input)
@@ -106,12 +102,10 @@ def classify_ticket(state: AgentState) -> dict:
             }
         )
 
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=category,
-            reasoning=f"Классификация: {category}"
-        ).to_dict()
+        return {
+            "category": category,
+            "reasoning": f"Классификация: {category}",
+        }
 
     except RetryError as e:
         # Обработка исчерпания попыток — бизнес-логика в узле
@@ -120,13 +114,11 @@ def classify_ticket(state: AgentState) -> dict:
             f"[{thread_id}] Исчерпаны попытки классификации",
             extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category="other",
-            error="classification_failed: retry_exhausted",
-            reasoning="Ошибка классификации: исчерпаны повторные попытки"
-        ).to_dict()
+        return {
+            "category": "other",
+            "error": "classification_failed: retry_exhausted",
+            "reasoning": "Ошибка классификации: исчерпаны повторные попытки",
+        }
 
     except Exception as e:
         # Другие ошибки (например, неожиданный формат ответа)
@@ -135,10 +127,8 @@ def classify_ticket(state: AgentState) -> dict:
             f"[{thread_id}] Неожиданная ошибка классификации",
             extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category="other",
-            error=f"classification_failed: {type(e).__name__}",
-            reasoning="Ошибка классификации, использован дефолт"
-        ).to_dict()
+        return {
+            "category": "other",
+            "error": f"classification_failed: {type(e).__name__}",
+            "reasoning": "Ошибка классификации, использован дефолт",
+        }

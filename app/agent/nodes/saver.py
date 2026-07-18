@@ -28,16 +28,11 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
             f"[{thread_id}] БД не подключена",
             extra={"thread_id": thread_id, "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            error=f"{state.error or ''} save_failed: БД не подключена".strip(),
-            reasoning=f"{state.reasoning or ''} | Ошибка сохранения".strip(" |"),
-            done=True
-        ).to_dict()
+        return {
+            "error": f"{state.error or ''} save_failed: БД не подключена".strip(),
+            "reasoning": f"{state.reasoning or ''} | Ошибка сохранения".strip(" |"),
+            "done": True,
+        }
 
     try:
         ticket_in = TicketCreate(
@@ -81,16 +76,11 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
             }
         )
 
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            reasoning=f"{state.reasoning or ''} | Сохранено в БД (id={db_ticket.id})".strip(" |"),
-            done=True,
-            ticket_id=db_ticket.id
-        ).to_dict()
+        return {
+            "reasoning": f"{state.reasoning or ''} | Сохранено в БД (id={db_ticket.id})".strip(" |"),
+            "done": True,
+            "ticket_id": db_ticket.id,
+        }
 
     except Exception as e:
         elapsed = time.time() - start_time
@@ -98,13 +88,8 @@ async def save_ticket(state: AgentState, config: RunnableConfig) -> dict:
             f"[{thread_id}] Ошибка сохранения заявки",
             extra={"thread_id": thread_id, "error": str(e), "elapsed_ms": round(elapsed * 1000, 2)}
         )
-        return AgentState(
-            thread_id=thread_id,
-            user_input=state.user_input,
-            category=state.category,
-            priority=state.priority,
-            tags=state.tags,
-            error=f"{state.error or ''} save_failed: {str(e)}".strip(),
-            reasoning=f"{state.reasoning or ''} | Ошибка сохранения".strip(" |"),
-            done=True
-        ).to_dict()
+        return {
+            "error": f"{state.error or ''} save_failed: {str(e)}".strip(),
+            "reasoning": f"{state.reasoning or ''} | Ошибка сохранения".strip(" |"),
+            "done": True,
+        }
