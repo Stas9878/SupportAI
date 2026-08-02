@@ -47,10 +47,10 @@ def classify_ticket(state: AgentState) -> dict:
     # 3. Санитизация ввода
     safe_input = sanitize_input(state.user_input)
 
-    # 4. Контекст истории (последние 3 сообщения, если есть)
+    # 4. Контекст истории (после chat_handler user + assistant)
     history_context = ""
     if len(state.messages) > 1:
-        recent_messages = state.messages[-3:]
+        recent_messages = state.messages[-3:]  # лимит на случай повторного захода без ticket_id
         history_lines = [
             f"{m.get('role', 'unknown').upper()}: {m.get('content', '')}"
             for m in recent_messages
