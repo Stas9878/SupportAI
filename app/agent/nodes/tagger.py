@@ -83,16 +83,11 @@ api, integration, mobile, web, documentation
         if not isinstance(tags, list):
             raise ValueError("Expected list of tags")
 
-        # 8. Валидация длины
-        if len(tags) > 3:
-            logger.warning(f"[{thread_id}] LLM вернул {len(tags)} тегов, обрезано до 3")
-            tags = tags[:3]
-
-        # 9. Валидация типов элементов
+        # 8. Валидация типов элементов
         if not all(isinstance(t, str) for t in tags):
             raise ValueError("All tags must be strings")
 
-        # 10. Валидация значений (фильтр по разрешённому набору)
+        # 9. Валидация значений (фильтр по разрешённому набору)
         valid_tags = {
             "login", "password", "access", "payment", "billing",
             "bug", "error", "crash", "feature", "ui", "api"
@@ -102,6 +97,11 @@ api, integration, mobile, web, documentation
 
         if len(tags) < original_count:
             logger.debug(f"[{thread_id}] Отфильтровано {original_count - len(tags)} невалидных тегов")
+
+        # 10. Ограничение количества (после фильтра — первые 3 допустимых тега)
+        if len(tags) > 3:
+            logger.warning(f"[{thread_id}] После фильтра {len(tags)} тегов, обрезано до 3")
+            tags = tags[:3]
 
         elapsed = time.time() - start_time
 
