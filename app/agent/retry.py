@@ -41,7 +41,7 @@ def with_llm_retry(
             wait=wait_exponential(multiplier=1, min=initial_wait, max=max_wait),
             retry=retry_if_exception_type(retry_exceptions),
             before_sleep=before_sleep_log(logger, logging.WARNING),
-            reraise=True
+            reraise=False
         )
         def _retryable(*args, **kwargs):
             return func(*args, **kwargs)

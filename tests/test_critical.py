@@ -172,14 +172,13 @@ class TestWithLlmRetry:
         assert result == "done"
         assert call_count == 2
 
-    def test_raises_original_error_after_max_attempts(self):
-        """После исчерпания попыток поднимается оригинальная ошибка (ConnectionError)."""
+    def test_raises_retry_error_after_max_attempts(self):
+        """После исчерпания попыток поднимается RetryError."""
         @with_llm_retry(max_attempts=2, initial_wait=0.01, max_wait=0.01)
         def always_fails():
             raise ConnectionError("Permanent error")
 
-        # Tenacity с reraise=True поднимает оригинальную ошибку, а не RetryError
-        with pytest.raises(ConnectionError, match="Permanent error"):
+        with pytest.raises(RetryError):
             always_fails()
 
     def test_does_not_retry_on_value_error(self):
